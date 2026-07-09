@@ -1,7 +1,17 @@
 import streamlit as st
 import pandas as pd
-import joblib
 from pathlib import Path
+
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LinearRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+
+# =========================================================
+# PAGE CONFIGURATION
+# =========================================================
 
 st.set_page_config(
     page_title="Student Performance Predictor",
@@ -9,25 +19,161 @@ st.set_page_config(
     layout="wide"
 )
 
+
+# =========================================================
+# PROJECT PATHS
+# =========================================================
+
 BASE_DIR = Path(__file__).resolve().parent
 
-MODEL_PATH = (
+DATA_PATH = (
     BASE_DIR
-    / "models"
-    / "student_performance_model.pkl"
+    / "data"
+    / "student_performance_cleaned.csv"
 )
 
 
+# =========================================================
+# TRAIN MODEL
+# =========================================================
+
 @st.cache_resource
-def load_model():
-    return joblib.load(MODEL_PATH)
+def train_model():
+
+    # Load cleaned dataset
+    df = pd.read_csv(DATA_PATH)
+
+    # Define features
+    X = df.drop(
+        columns=[
+            "Student_ID",
+            "Final_Exam_Score",
+            "Pass_Fail"
+        ]
+    )
+
+    # Define target
+    y = df["Final_Exam_Score"]
+
+    # Numerical features
+    numerical_features = [
+        "Study_Hours_per_Week",
+        "Attendance_Rate",
+        "Past_Exam_Scores"
+    ]
+
+    # Categorical features
+    categorical_features = [
+        "Gender",
+        "Parental_Education_Level",
+        "Internet_Access_at_Home",
+        "Extracurricular_Activities"
+    ]
+
+    # Numerical preprocessing
+    numerical_pipeline = Pipeline(
+        steps=[
+            (
+                "imputer",
+                SimpleImputer(
+                    strategy="median"
+                )
+            ),
+            (
+                "scaler",
+                StandardScaler()
+            )
+        ]
+    )
+
+    # Categorical preprocessing
+    categorical_pipeline = Pipeline(
+        steps=[
+            (
+                "imputer",
+                SimpleImputer(
+                    strategy="most_frequent"
+                )
+            ),
+            (
+                "encoder",
+                OneHotEncoder(
+                    handle_unknown="ignore"
+                )
+            )
+        ]
+    )
+
+    # Combined preprocessing
+    preprocessor = ColumnTransformer(
+        transformers=[
+            (
+                "num",
+                numerical_pipeline,
+                numerical_features
+            ),
+            (
+                "cat",
+                categorical_pipeline,
+                categorical_features
+            )
+        ]
+    )
+
+    # Complete ML pipeline
+    model = Pipeline(
+        steps=[
+            (
+                "preprocessor",
+                preprocessor
+            ),
+            (
+                "model",
+                LinearRegression()
+            )
+        ]
+    )
+
+    # Train model
+    model.fit(X, y)
+
+    return model
 
 
-model = load_model()
+# =========================================================
+# LOAD TRAINED MODEL
+# =========================================================
+
+try:
+    model = train_model()
+
+except FileNotFoundError:
+
+    st.error(
+        "Dataset file not found. Expected location: "
+        "data/student_performance_cleaned.csv"
+    )
+
+    st.stop()
+
+except Exception as error:
+
+    st.error(
+        "Unable to train the prediction model."
+    )
+
+    st.exception(error)
+
+    st.stop()
 
 
+# =========================================================
+# APPLICATION HEADER
+# =========================================================
 
-st.title("🎓 Student Performance Prediction System")
+st.title(
+    "🎓 Student Performance Prediction System"
+)
 
 st.markdown(
     """
@@ -39,11 +185,17 @@ st.markdown(
 st.divider()
 
 
-
+# =========================================================
+# INPUT FORM
+# =========================================================
 
 with st.form("prediction_form"):
 
     col1, col2 = st.columns(2)
+
+    # -------------------------
+    # LEFT COLUMN
+    # -------------------------
 
     with col1:
 
@@ -77,6 +229,10 @@ with st.form("prediction_form"):
             max_value=100,
             value=70
         )
+
+    # -------------------------
+    # RIGHT COLUMN
+    # -------------------------
 
     with col2:
 
@@ -112,17 +268,26 @@ with st.form("prediction_form"):
     )
 
 
-# -----------------------------
-# Prediction
-# -----------------------------
+# =========================================================
+# PREDICTION
+# =========================================================
 
 if submitted:
 
+    # Create input dataframe
     input_data = pd.DataFrame({
-        "Gender": [gender],
-        "Study_Hours_per_Week": [study_hours],
-        "Attendance_Rate": [attendance],
-        "Past_Exam_Scores": [past_scores],
+        "Gender": [
+            gender
+        ],
+        "Study_Hours_per_Week": [
+            study_hours
+        ],
+        "Attendance_Rate": [
+            attendance
+        ],
+        "Past_Exam_Scores": [
+            past_scores
+        ],
         "Parental_Education_Level": [
             parent_education
         ],
@@ -134,95 +299,136 @@ if submitted:
         ]
     })
 
-    raw_prediction = model.predict(
-        input_data
-    )[0]
+    try:
 
-    # Keep displayed score in valid range
-    predicted_score = max(
-        0.0,
-        min(100.0, raw_prediction)
-    )
+        # Generate prediction
+        raw_prediction = model.predict(
+            input_data
+        )[0]
 
-    st.divider()
-
-    st.subheader("Prediction Result")
-
-    result_col1, result_col2 = st.columns(2)
-
-    with result_col1:
-
-        st.metric(
-            label="Predicted Final Exam Score",
-            value=f"{predicted_score:.2f} / 100"
+        # Keep displayed score within 0-100
+        predicted_score = max(
+            0.0,
+            min(
+                100.0,
+                float(raw_prediction)
+            )
         )
 
-    with result_col2:
+        # -------------------------
+        # PERFORMANCE CATEGORY
+        # -------------------------
 
         if predicted_score >= 85:
+
             performance = "Excellent"
 
         elif predicted_score >= 70:
+
             performance = "Good"
 
         elif predicted_score >= 50:
+
             performance = "Average"
 
         else:
+
             performance = "Needs Support"
 
-        st.metric(
-            label="Performance Level",
-            value=performance
+        # -------------------------
+        # DISPLAY RESULT
+        # -------------------------
+
+        st.divider()
+
+        st.subheader(
+            "Prediction Result"
         )
 
-    st.progress(
-        int(round(predicted_score))
-    )
+        result_col1, result_col2 = st.columns(2)
 
-    if predicted_score >= 85:
+        with result_col1:
 
-        st.success(
-            "Excellent predicted academic performance."
+            st.metric(
+                label="Predicted Final Exam Score",
+                value=(
+                    f"{predicted_score:.2f} / 100"
+                )
+            )
+
+        with result_col2:
+
+            st.metric(
+                label="Performance Level",
+                value=performance
+            )
+
+        # Progress bar
+        st.progress(
+            int(
+                round(predicted_score)
+            )
         )
 
-    elif predicted_score >= 70:
+        # -------------------------
+        # PERFORMANCE MESSAGE
+        # -------------------------
 
-        st.info(
-            "Good predicted academic performance."
-        )
+        if predicted_score >= 85:
 
-    elif predicted_score >= 50:
+            st.success(
+                "Excellent predicted academic performance."
+            )
 
-        st.warning(
-            "Average predicted performance. "
-            "Additional academic improvement may help."
-        )
+        elif predicted_score >= 70:
 
-    else:
+            st.info(
+                "Good predicted academic performance."
+            )
+
+        elif predicted_score >= 50:
+
+            st.warning(
+                "Average predicted performance. "
+                "Additional academic improvement may help."
+            )
+
+        else:
+
+            st.error(
+                "The student may benefit from "
+                "additional academic support."
+            )
+
+    except Exception as error:
 
         st.error(
-            "The student may benefit from "
-            "additional academic support."
+            "An error occurred while generating "
+            "the prediction."
         )
 
+        st.exception(error)
 
-# -----------------------------
-# Project information
-# -----------------------------
+
+# =========================================================
+# PROJECT INFORMATION
+# =========================================================
 
 st.divider()
 
-with st.expander("About this project"):
+with st.expander(
+    "About this project"
+):
 
     st.markdown(
         """
         This machine learning application predicts
-        student final exam performance.
+        student final exam performance using academic
+        and personal factors.
 
         **Selected Model:** Linear Regression
 
-        **Test-set Performance:**
+        **Baseline Test-set Performance:**
 
         - MAE: 3.0669
         - MSE: 14.4693
@@ -233,8 +439,19 @@ with st.expander("About this project"):
 
         - Decision Tree Regressor
         - Random Forest Regressor
+
+        The deployed application reconstructs and trains
+        the preprocessing and Linear Regression pipeline
+        from the cleaned project dataset when the app
+        starts. The trained model is cached for subsequent
+        predictions.
         """
     )
+
+
+# =========================================================
+# FOOTER
+# =========================================================
 
 st.divider()
 
